@@ -9,7 +9,7 @@
 6. [Actualización de Precios Especiales por Fecha](#6-actualización-de-precios-especiales-por-fecha)
 7. [Cambio de Mapa de Asientos](#7-cambio-de-mapa-de-asientos)
 8. [Casos Especiales y Conflictos](#8-casos-especiales-y-conflictos)
-9. [Mejores Prácticas](#9-mejores-prácticas)
+9. [Servicios Maestros (Master Services)](#9-servicios-maestros-master-services)
 
 ---
 ---
@@ -2399,6 +2399,377 @@ La función `searchSchedules`:
 **Ventaja principal:** El cliente SIEMPRE ve opciones, incluso si no hay horarios guardados en BD.
 
 **Ubicación:** `/functions/src/entities/services/services.list.js` en el proyecto h4f-backend-buyer-js
+
+---
+---
+
+# 9. Servicios Maestros (Master Services)
+
+## ¿Qué son los Servicios Maestros?
+
+Los Servicios Maestros permiten **vincular múltiples servicios que comparten el mismo recurso físico** (como un bus, avión o barco) para que al reservar un asiento en uno, ese asiento quede **automáticamente bloqueado en todos los servicios vinculados**.
+
+---
+
+## Concepto Simplificado
+
+Cuando varios servicios usan el mismo vehículo físico, al reservar un asiento en uno, ese asiento queda bloqueado en TODOS los servicios vinculados.
+
+### 🚌 Ejemplo: Bus con 45 asientos que hace 3 rutas
+
+**Servicios del mismo bus:**
+- **SS→LA** (San Salvador → La Antigua)
+- **SS→PET** (San Salvador → Peten)
+- **SS→GUA** (San Salvador → Guatemala directo)
+
+**Escenario:**
+Si alguien reserva el asiento **A5** en el servicio **SS→LA**:
+
+| Servicio | Estado del Asiento A5 |
+|----------|----------------------|
+| SS→LA | ✅ OCUPADO (comprado) |
+| SS→PET | ❌ BLOQUEADO |
+| SS→GUA | ❌ BLOQUEADO |
+
+**¿Por qué?** Porque físicamente es el mismo bus. Si la persona A compró A5 para ir de San Salvador a La Antigua, nadie más puede usar ese asiento en ningún tramo del viaje.
+
+---
+
+## ⚠️ Requisitos Importantes
+
+### Los servicios vinculados DEBEN ser idénticos en:
+
+| Requisito | Por qué es necesario |
+|-----------|---------------------|
+| **Mismas fechas** | El bloqueo aplica por horario/día específico |
+| **Mismo mapa de asientos** | Los asientos deben coincidir exactamente |
+| **Mismos horarios** | Para que el sistema sepa qué schedules vincular |
+
+### ❌ Si los servicios NO coinciden:
+
+```
+Servicio A: Bus de 45 asientos, sale 8:00am
+Servicio B: Bus de 50 asientos, sale 9:00am
+
+❌ NO se puede vincular correctamente
+❌ Los asientos no coinciden
+❌ El aforo no se bloqueará correctamente
+```
+
+### ✅ Configuración correcta:
+
+```
+Servicio A (SS→LA): Bus de 45 asientos, sale 8:00am
+Servicio B (SS→PET): Bus de 45 asientos, sale 8:00am
+Servicio C (SS→GUA): Bus de 45 asientos, sale 8:00am
+
+✅ Mismo mapa, mismas fechas
+✅ El bloqueo funcionará correctamente
+```
+
+---
+
+## Cómo Crear un Servicio Maestro
+
+Para crear un servicio maestro desde el backoffice, debes configurar los siguientes campos:
+
+### Campos a completar:
+
+| Campo | Descripción | Ejemplo |
+|-------|-------------|---------|
+| **Nombre** | Nombre descriptivo del servicio maestro | "Ruta Centroamérica Express" |
+| **Código** | Código único para identificación interna | "CA-EXPRESS-001" |
+| **Descripción** | Explicación del servicio (opcional) | "Servicio maestro para la ruta CA" |
+| **Estado** | Activo o inactivo | Activo ✅ |
+
+---
+
+### Paso 1: Seleccionar los Servicios Vinculados
+
+En la sección **"Servicios Vinculados"** o **"Master Priority"**, debes seleccionar todos los servicios que comparten el mismo vehículo físico.
+
+**Ejemplo:**
+Selecciona los 3 servicios que usa el mismo bus:
+1. ✅ San Salvador → La Antigua
+2. ✅ La Antigua → Guatemala
+3. ✅ San Salvador → Guatemala (directo)
+
+**Importante:** El orden en que los selecciones indica la prioridad. Normalmente es el orden geográfico de la ruta.
+
+---
+
+### Paso 2: Configurar el Mapeo de Precios (Price Map)
+
+El **mapeo de precios** es donde relacionas los precios equivalentes de cada servicio. Esto le dice al sistema: "cuando vendan un boleto de Adulto en el servicio A, bloquea también el Adulto de los servicios B y C".
+
+**¿Cómo se hace?**
+
+Para cada tipo de boleto que tengas, debes:
+
+1. **Dar un nombre al grupo** (ej: "Adulto", "Niño", "VIP")
+2. **Seleccionar el precio correspondiente de cada servicio**
+
+**Ejemplo de configuración:**
+
+| Nombre del Grupo | Servicio SS→LA | Servicio LA→GUA | Servicio SS→GUA |
+|-----------------|----------------|-----------------|-----------------|
+| **Adulto** | Adulto ($50) | Adulto ($35) | Adulto ($75) |
+| **Niño** | Niño ($30) | Niño ($20) | Niño ($45) |
+| **VIP** | VIP ($100) | VIP ($70) | VIP ($150) |
+
+**¿Por qué es importante?**
+Cuando alguien compra un boleto "Adulto" en SS→LA, el sistema automáticamente sabe que debe bloquear el precio "Adulto" de LA→GUA y SS→GUA, porque están mapeados juntos.
+
+---
+
+### Paso 3: Guardar
+
+Al guardar, el sistema:
+- Crea el servicio maestro
+- Vincula los servicios seleccionados
+- Genera IDs automáticos para cada grupo de precios
+- Activa el bloqueo automático de asientos
+
+---
+
+## Cómo Actualizar un Servicio Maestro
+
+### Actualización Parcial
+
+Al editar un servicio maestro, **solo se actualizan los campos que modifiques**. Los demás campos mantienen sus valores originales.
+
+**Ejemplos:**
+
+- **Cambiar solo el nombre:** Los servicios vinculados y el mapeo de precios se mantienen igual
+- **Agregar un nuevo servicio:** Los demás servicios siguen vinculados, solo se agrega el nuevo
+- **Agregar un nuevo tipo de precio:** Los precios existentes se mantienen, solo se agrega el nuevo grupo
+
+---
+
+### Agregar un Nuevo Precio al Mapeo
+
+Si agregas un nuevo tipo de boleto a los servicios (por ejemplo "Tercera Edad"), debes:
+
+1. Ir al servicio maestro
+2. En la sección de mapeo de precios, agregar un nuevo grupo
+3. Seleccionar el precio "Tercera Edad" de cada servicio vinculado
+4. Guardar
+
+El sistema generará automáticamente un ID para el nuevo grupo.
+
+---
+
+### Agregar o Quitar Servicios Vinculados
+
+Si necesitas agregar o quitar un servicio del grupo:
+
+1. Ir al servicio maestro
+2. En la sección de servicios vinculados, agregar o quitar el servicio
+3. **Importante:** Si agregas un servicio, también debes actualizar el mapeo de precios para incluir los precios del nuevo servicio
+4. Guardar
+
+---
+
+## Cómo Ver el Aforo de los Servicios
+
+Al consultar el detalle de un servicio maestro, puedes ver información detallada de cada precio mapeado:
+
+| Información | Descripción |
+|-------------|-------------|
+| **Nombre del servicio** | De qué servicio viene el precio |
+| **Precio** | Valor del boleto |
+| **Capacidad total** | Cuántos asientos tiene |
+| **Vendidos** | Cuántos se han vendido |
+| **Disponibles** | Capacidad - Vendidos |
+
+**Ejemplo de visualización:**
+
+**Grupo: Adulto**
+| Servicio | Precio | Capacidad | Vendidos | Disponibles |
+|----------|--------|-----------|----------|-------------|
+| SS→LA | $50 | 45 | 12 | 33 |
+| LA→GUA | $35 | 45 | 8 | 37 |
+| SS→GUA | $75 | 45 | 20 | 25 |
+
+Esto te permite ver de un vistazo cuántos asientos quedan en cada tramo.
+
+---
+
+## Comportamiento del Bloqueo de Asientos
+
+### ⚠️ Versión Actual: Bloqueo Completo de Ruta
+
+En la versión actual, cuando se reserva un asiento:
+- El asiento queda **BLOQUEADO en TODA la ruta** hasta el destino final
+- NO se libera en tramos intermedios
+
+### Ejemplo:
+
+**Ruta completa del bus:** San Salvador → La Antigua → Guatemala
+
+**Escenario:** Pasajero compra SS→LA (primer tramo) en el asiento A5
+
+| Servicio | Estado del Asiento A5 |
+|----------|----------------------|
+| SS→LA | ✅ OCUPADO (el pasajero viaja aquí) |
+| LA→GUA | ❌ BLOQUEADO (aunque el pasajero se bajó) |
+| SS→GUA | ❌ BLOQUEADO (ruta completa) |
+
+**¿Por qué no se libera en LA→GUA?**
+En esta versión, el sistema bloquea toda la ruta por simplicidad y seguridad. Esto evita problemas de overbooking pero puede reducir el aprovechamiento del bus.
+
+### 🔜 Versión Futura: Liberación por Tramos
+
+En una próxima versión se implementará:
+- Cuando un pasajero se baja, el asiento se libera para el siguiente tramo
+- Mayor aprovechamiento de capacidad
+- Lógica más compleja de reservas
+
+**Ejemplo futuro:** Pasajero compra SS→LA en asiento A5
+
+| Servicio | Estado del Asiento A5 |
+|----------|----------------------|
+| SS→LA | ✅ OCUPADO |
+| LA→GUA | ✅ LIBRE (se libera cuando el pasajero se baja) |
+| SS→GUA | ❌ BLOQUEADO (ruta completa sigue bloqueada) |
+
+---
+
+## Casos de Uso Comunes
+
+### 🚌 Caso 1: Ruta de bus con paradas
+
+**Situación:** Bus de 45 asientos que hace:
+- Maracaibo → Caracas (directo)
+- Maracaibo → Valencia → Caracas
+
+**Configuración:** Vinculas los 3 servicios:
+1. Maracaibo → Caracas (directo)
+2. Maracaibo → Valencia
+3. Valencia → Caracas
+
+**Resultado:** Si alguien compra Maracaibo→Caracas directo en asiento 15B, ese asiento queda bloqueado también en los servicios por tramos.
+
+---
+
+### ✈️ Caso 2: Vuelo con conexión
+
+**Situación:** Avión que hace:
+- Caracas → Panamá
+- Panamá → Miami
+- Caracas → Miami (directo, mismo avión)
+
+**Configuración:** Vinculas los 3 servicios en el orden de la ruta.
+
+**Resultado:** Los asientos se bloquean correctamente entre los tres servicios.
+
+---
+
+### 🚢 Caso 3: Ferry con escalas
+
+**Situación:** Ferry de 200 pasajeros:
+- Puerto La Cruz → Margarita
+- Margarita → Los Roques
+- Puerto La Cruz → Los Roques (directo)
+
+**Configuración:** Vinculas los 3 servicios y mapeas los precios correspondientes.
+
+**Resultado:** Los asientos se bloquean en toda la ruta del ferry.
+
+---
+
+## Mejores Prácticas
+
+### ✅ Qué SÍ hacer
+
+1. **Verificar que los servicios sean idénticos**
+   - Mismo número de asientos
+   - Mismas fechas de operación
+   - Mismos horarios
+
+2. **Usar nombres descriptivos en los grupos de precios**
+   - Nombres claros como "Adulto", "Niño", "VIP Ejecutivo"
+   - Evitar nombres genéricos como "Precio 1", "Precio 2"
+
+3. **Mantener el orden correcto de los servicios vinculados**
+   - El orden indica la prioridad y normalmente sigue la geografía de la ruta
+   - Útil para reportes y gestión
+
+4. **Documentar la configuración**
+   - Anota qué precios de cada servicio están mapeados juntos
+   - Facilita actualizaciones futuras
+
+---
+
+### ❌ Qué NO hacer
+
+1. **No vincular servicios con diferente capacidad**
+   - Si un servicio tiene 45 asientos y otro tiene 50, el bloqueo NO funcionará correctamente
+   - Todos deben tener el mismo número de asientos
+
+2. **No vincular servicios con diferente mapa de asientos**
+   - Si usan mapas diferentes, los asientos no coincidirán
+   - Por ejemplo, el asiento "A5" de un mapa puede no existir en otro
+
+3. **No olvidar actualizar el mapeo de precios**
+   - Si agregas un nuevo tipo de boleto en los servicios hijos
+   - Debes también agregar ese grupo al mapeo de precios del maestro
+
+---
+
+## Preguntas Frecuentes
+
+### ❓ ¿Qué pasa si selecciono un servicio que no existe?
+
+**Respuesta:** El sistema no lo valida estrictamente. Simplemente no encontrará horarios para ese servicio. Asegúrate de seleccionar servicios que existen y están activos.
+
+---
+
+### ❓ ¿Puedo agregar un servicio a múltiples maestros?
+
+**Respuesta:** Técnicamente sí, pero **NO es recomendable**. Un servicio debe pertenecer a un solo servicio maestro para evitar conflictos de bloqueo.
+
+---
+
+### ❓ ¿El bloqueo es en tiempo real?
+
+**Respuesta:** Sí. Cuando se hace una reserva, el asiento se bloquea inmediatamente en todos los servicios vinculados del mismo maestro.
+
+---
+
+### ❓ ¿Cómo sé cuántos asientos quedan disponibles?
+
+**Respuesta:** En el detalle del servicio maestro puedes ver para cada grupo de precios:
+- Capacidad total de cada servicio
+- Vendidos
+- Disponibles (Capacidad - Vendidos)
+
+---
+
+### ❓ ¿Puedo desactivar temporalmente un servicio maestro?
+
+**Respuesta:** Sí, simplemente cambia el estado a "Inactivo" en la edición del servicio maestro.
+
+---
+
+## Resumen
+
+Los Servicios Maestros permiten:
+
+1. 🔗 **Vincular** múltiples servicios que comparten el mismo recurso físico
+2. 🪑 **Bloquear** asientos automáticamente en todos los servicios vinculados
+3. 💰 **Mapear** precios equivalentes entre servicios
+4. 📊 **Consultar** aforo de todos los servicios desde un solo lugar
+5. 🔄 **Actualizar** parcialmente solo los campos que necesites
+
+**Requisitos clave:**
+- ✅ Mismas fechas de operación
+- ✅ Mismo mapa de asientos
+- ✅ Mismos horarios
+
+**Limitación actual:**
+- ⚠️ El asiento queda bloqueado en toda la ruta (no se libera por tramos)
+- 🔜 Liberación por tramos vendrá en una versión futura
 
 ---
 ---
